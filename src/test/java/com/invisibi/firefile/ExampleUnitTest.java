@@ -1,4 +1,4 @@
-package com.invisibi.ffile;
+package com.invisibi.firefile;
 
 import org.junit.Test;
 
