@@ -176,6 +176,11 @@ public class FireFile {
         this.state = state;
     }
 
+    public FireFile(final FirebaseFile firebaseFile) {
+        this.firebaseFile = firebaseFile;
+        this.state = new State.Builder().name(firebaseFile.getName()).url(firebaseFile.getUrl()).mimeType(firebaseFile.getMimeType()).build();
+    }
+
     public State getState() {
         return state;
     }
