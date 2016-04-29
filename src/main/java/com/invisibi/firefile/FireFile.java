@@ -1,21 +1,14 @@
 package com.invisibi.firefile;
 
 import android.content.Context;
-import android.text.TextUtils;
+import android.webkit.MimeTypeMap;
 
 import com.amazonaws.regions.Regions;
-import com.firebase.client.DataSnapshot;
-import com.firebase.client.Firebase;
-import com.firebase.client.FirebaseError;
-import com.firebase.client.ServerValue;
-import com.firebase.client.ValueEventListener;
 import com.invisibi.firefile.callback.GetDataCallback;
 import com.invisibi.firefile.callback.GetDataStreamCallback;
 import com.invisibi.firefile.callback.GetFileCallback;
 import com.invisibi.firefile.callback.ProgressCallback;
 import com.invisibi.firefile.callback.SaveCallback;
-import com.invisibi.firefile.data.FireFilePointer;
-import com.invisibi.firefile.data.FirebaseFile;
 import com.invisibi.firefile.util.FireFileTaskUtils;
 import com.invisibi.firefile.util.FireFileUtils;
 
@@ -24,9 +17,7 @@ import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.Collections;
-import java.util.HashMap;
 import java.util.HashSet;
-import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.Callable;
 
@@ -39,14 +30,12 @@ import bolts.TaskCompletionSource;
  */
 public class FireFile {
     private static final int MAX_FILE_SIZE = 10 * 1048576;
-    private static final String FIREBASE_FILE_TABLE_NAME = "files";
-    private static Firebase firebaseRef;
+    private static String s3URL;
+    private static String s3Bucket;
     private static FireFileController fFileController;
     private State state;
     private byte[] data;
     private File file;
-    private FirebaseFile firebaseFile;
-    private FireFilePointer fireFilePointer;
 
     final TaskQueue taskQueue = new TaskQueue();
     private Set<TaskCompletionSource> currentTasks = Collections.synchronizedSet(new HashSet<TaskCompletionSource>());
@@ -131,13 +120,17 @@ public class FireFile {
 
     }
 
-    public static void initialize(final Context context, final String awsIdentityPoolId, final String s3URL, final String s3Bucket, final Regions s3Regions, final String firebaseURL) {
+    public static void initialize(final Context context, final String awsIdentityPoolId, final String s3URL, final String s3Bucket, final Regions s3Regions) {
         fFileController = new FireFileController(context, awsIdentityPoolId, s3Regions, s3URL, s3Bucket);
-        firebaseRef = new Firebase(firebaseURL).child(FIREBASE_FILE_TABLE_NAME);
+        FireFile.s3URL = s3URL;
+        FireFile.s3Bucket = s3Bucket;
     }
 
-    public FireFile(final FireFilePointer fireFilePointer) {
-        this.fireFilePointer = fireFilePointer;
+    public FireFile(final String objectId) {
+        final String url = s3URL + File.separator + s3Bucket + File.separator + objectId;
+        final String mimeType = MimeTypeMap.getFileExtensionFromUrl(url);
+        final String name = objectId;
+        this.state = new State.Builder().url(url).name(name).mimeType(mimeType).build();
     }
 
     public FireFile(final File file) {
@@ -174,11 +167,6 @@ public class FireFile {
 
     public FireFile(final State state) {
         this.state = state;
-    }
-
-    public FireFile(final FirebaseFile firebaseFile) {
-        this.firebaseFile = firebaseFile;
-        this.state = new State.Builder().name(firebaseFile.getName()).url(firebaseFile.getUrl()).mimeType(firebaseFile.getMimeType()).build();
     }
 
     public State getState() {
@@ -251,29 +239,6 @@ public class FireFile {
                         return task.makeVoid();
                     }
                 });
-            }
-        }).onSuccessTask(new Continuation<Void, Task<Void>>() {
-            @Override
-            public Task<Void> then(final Task<Void> task) throws Exception {
-                final TaskCompletionSource<FireFile.State> taskCompletionSource = new TaskCompletionSource<>();
-                final Map<String, Object> fileData = new HashMap<>();
-                fileData.put("createdAt", ServerValue.TIMESTAMP);
-                fileData.put("mimeType", state.mimeType());
-                fileData.put("name", state.name());
-                fileData.put("url", state.url());
-                final Firebase newFileRef = firebaseRef.push();
-                newFileRef.setValue(fileData, new Firebase.CompletionListener() {
-                    @Override
-                    public void onComplete(final FirebaseError firebaseError, final Firebase firebase) {
-                        if (firebaseError == null) {
-                            fireFilePointer = new FireFilePointer(newFileRef.getKey(), "file");
-                            taskCompletionSource.setResult(null);
-                        } else {
-                            taskCompletionSource.setError(firebaseError.toException());
-                        }
-                    }
-                });
-                return taskCompletionSource.getTask().makeVoid();
             }
         });
     }
@@ -428,35 +393,7 @@ public class FireFile {
             return Task.cancelled();
         }
 
-        return toAwait.onSuccessTask(new Continuation<Void, Task<Void>>() {
-            @Override
-            public Task<Void> then(final Task<Void> task) throws Exception {
-                if (state == null && fireFilePointer != null && !TextUtils.isEmpty(fireFilePointer.getKey())) {
-                    final TaskCompletionSource<Void> taskCompletionSource = new TaskCompletionSource<>();
-                    firebaseRef.child(fireFilePointer.getKey()).addListenerForSingleValueEvent(new ValueEventListener() {
-                        @Override
-                        public void onDataChange(final DataSnapshot dataSnapshot) {
-                            if (dataSnapshot.exists()) {
-                                firebaseFile = dataSnapshot.getValue(FirebaseFile.class);
-                                firebaseFile.setKey(fireFilePointer.getKey());
-                                state = new State.Builder().name(firebaseFile.getName()).mimeType(firebaseFile.getMimeType()).url(firebaseFile.getUrl()).build();
-                                taskCompletionSource.setResult(null);
-                            } else {
-                                taskCompletionSource.setError(new Exception(fireFilePointer.getKey() + " not found"));
-                            }
-                        }
-
-                        @Override
-                        public void onCancelled(final FirebaseError firebaseError) {
-                            taskCompletionSource.setError(firebaseError.toException());
-                        }
-                    });
-                    return taskCompletionSource.getTask();
-                } else {
-                    return task.makeVoid();
-                }
-            }
-        }).onSuccessTask(new Continuation<Void, Task<File>>() {
+        return toAwait.onSuccessTask(new Continuation<Void, Task<File>>() {
             @Override
             public Task<File> then(final Task<Void> task) throws Exception {
                 if (cancellationToken != null && cancellationToken.isCancelled()) {
@@ -485,13 +422,5 @@ public class FireFile {
             tcs.trySetCancelled();
         }
         currentTasks.removeAll(tasks);
-    }
-
-    public FirebaseFile getFirebaseFile() {
-        return firebaseFile;
-    }
-
-    public FireFilePointer getFireFilePointer() {
-        return fireFilePointer;
     }
 }
