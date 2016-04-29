@@ -14,6 +14,7 @@ import com.invisibi.firefile.callback.GetDataStreamCallback;
 import com.invisibi.firefile.callback.GetFileCallback;
 import com.invisibi.firefile.callback.ProgressCallback;
 import com.invisibi.firefile.callback.SaveCallback;
+import com.invisibi.firefile.data.FireFilePointer;
 import com.invisibi.firefile.data.FirebaseFile;
 import com.invisibi.firefile.util.FireFileTaskUtils;
 import com.invisibi.firefile.util.FireFileUtils;
@@ -45,7 +46,7 @@ public class FireFile {
     private byte[] data;
     private File file;
     private FirebaseFile firebaseFile;
-    private String firebaseFileKey;
+    private FireFilePointer fireFilePointer;
 
     final TaskQueue taskQueue = new TaskQueue();
     private Set<TaskCompletionSource> currentTasks = Collections.synchronizedSet(new HashSet<TaskCompletionSource>());
@@ -135,8 +136,8 @@ public class FireFile {
         firebaseRef = new Firebase(firebaseURL).child(FIREBASE_FILE_TABLE_NAME);
     }
 
-    public FireFile(final String firebaseFileKey) {
-        this.firebaseFileKey = firebaseFileKey;
+    public FireFile(final FireFilePointer fireFilePointer) {
+        this.fireFilePointer = fireFilePointer;
     }
 
     public FireFile(final File file) {
@@ -260,7 +261,7 @@ public class FireFile {
                     @Override
                     public void onComplete(final FirebaseError firebaseError, final Firebase firebase) {
                         if (firebaseError == null) {
-                            firebaseFileKey = newFileRef.getKey();
+                            fireFilePointer = new FireFilePointer(newFileRef.getKey(), "file");
                             taskCompletionSource.setResult(null);
                         } else {
                             taskCompletionSource.setError(firebaseError.toException());
@@ -425,22 +426,18 @@ public class FireFile {
         return toAwait.onSuccessTask(new Continuation<Void, Task<Void>>() {
             @Override
             public Task<Void> then(final Task<Void> task) throws Exception {
-                if (state != null) {
-                    return task.makeVoid();
-                }
-
-                if (!TextUtils.isEmpty(firebaseFileKey)) {
+                if (state == null && fireFilePointer != null && !TextUtils.isEmpty(fireFilePointer.getKey())) {
                     final TaskCompletionSource<Void> taskCompletionSource = new TaskCompletionSource<>();
-                    firebaseRef.child(firebaseFileKey).addListenerForSingleValueEvent(new ValueEventListener() {
+                    firebaseRef.child(fireFilePointer.getKey()).addListenerForSingleValueEvent(new ValueEventListener() {
                         @Override
                         public void onDataChange(final DataSnapshot dataSnapshot) {
                             if (dataSnapshot.exists()) {
                                 firebaseFile = dataSnapshot.getValue(FirebaseFile.class);
-                                firebaseFile.setKey(firebaseFileKey);
+                                firebaseFile.setKey(fireFilePointer.getKey());
                                 state = new State.Builder().name(firebaseFile.getName()).mimeType(firebaseFile.getMimeType()).url(firebaseFile.getUrl()).build();
                                 taskCompletionSource.setResult(null);
                             } else {
-                                taskCompletionSource.setError(new Exception(firebaseFileKey + " not found"));
+                                taskCompletionSource.setError(new Exception(fireFilePointer.getKey() + " not found"));
                             }
                         }
 
@@ -487,5 +484,9 @@ public class FireFile {
 
     public FirebaseFile getFirebaseFile() {
         return firebaseFile;
+    }
+
+    public FireFilePointer getFireFilePointer() {
+        return fireFilePointer;
     }
 }
