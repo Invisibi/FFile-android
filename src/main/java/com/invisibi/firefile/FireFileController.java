@@ -111,7 +111,7 @@ public class FireFileController {
 
     private TaskCompletionSource uploadFileToS3(final File file, final FireFile.State state, final ProgressCallback progressCallback) {
         final TaskCompletionSource<FireFile.State> taskCompletionSource = new TaskCompletionSource<>();
-        final String objectId = UUID.randomUUID() + state.name();
+        final String objectId = UUID.randomUUID() + "-" + state.name();
         TransferObserver transferObserver = transferUtility.upload(s3Bucket, DEFAULT_SUB_FOLDER + File.separator + objectId, file, CannedAccessControlList.PublicReadWrite);
         transferObserver.setTransferListener(new TransferListener() {
             @Override
