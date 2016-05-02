@@ -189,6 +189,14 @@ public class FireFile {
         return state.url();
     }
 
+    public String getObjectId() {
+        String objectId = "";
+        if (state != null) {
+            objectId = state.url().substring(state.url().lastIndexOf(File.separator) + 1);
+        }
+        return objectId;
+    }
+
     public void save() throws Exception {
         FireFileTaskUtils.wait(saveInBackground());
     }
