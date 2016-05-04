@@ -127,7 +127,7 @@ public class FireFile {
     }
 
     public FireFile(final String objectId) {
-        final String url = s3URL + File.separator + s3Bucket + File.separator + objectId;
+        final String url = s3URL + File.separator + s3Bucket + File.separator + FireFileController.DEFAULT_SUB_FOLDER + File.separator + objectId;
         final String mimeType = MimeTypeMap.getFileExtensionFromUrl(url);
         final String name = objectId;
         this.state = new State.Builder().url(url).name(name).mimeType(mimeType).build();

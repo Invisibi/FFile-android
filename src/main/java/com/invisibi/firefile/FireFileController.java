@@ -28,7 +28,7 @@ import bolts.TaskCompletionSource;
  * Created by Tiny on 4/28/16.
  */
 public class FireFileController {
-    private static final String DEFAULT_SUB_FOLDER = "file";
+    public static final String DEFAULT_SUB_FOLDER = "file";
     private TransferUtility transferUtility;
     private String s3URL;
     private String s3Bucket;
