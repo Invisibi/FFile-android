@@ -168,7 +168,7 @@ public class FireFileController {
                 final TaskCompletionSource<File> taskCompletionSource = new TaskCompletionSource<>();
 
                 final File tempFile = getTempFile(state);
-                final String objectId = state.url().replace(s3URL + s3Bucket + "/", "");
+                final String objectId = state.url().replace(s3URL + "/" + s3Bucket + "/", "");
                 TransferObserver observer = transferUtility.download(s3Bucket, objectId, tempFile);
                 observer.setTransferListener(new TransferListener() {
                     @Override
