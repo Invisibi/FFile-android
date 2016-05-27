@@ -1,6 +1,7 @@
 package com.invisibi.firefile;
 
 import android.content.Context;
+import android.text.TextUtils;
 import android.util.Log;
 
 import com.amazonaws.auth.CognitoCachingCredentialsProvider;
@@ -111,7 +112,11 @@ public class FireFileController {
 
     private TaskCompletionSource uploadFileToS3(final File file, final FireFile.State state, final ProgressCallback progressCallback) {
         final TaskCompletionSource<FireFile.State> taskCompletionSource = new TaskCompletionSource<>();
-        final String objectId = UUID.randomUUID() + "-" + state.name();
+        String objectId = UUID.randomUUID() + "-" + state.name();
+        if (!TextUtils.isEmpty(state.mimeType())) {
+            objectId = objectId.replace(".tmp", "." + state.mimeType());
+        }
+        final String finalObjectId = objectId;
         TransferObserver transferObserver = transferUtility.upload(s3Bucket, DEFAULT_SUB_FOLDER + File.separator + objectId, file, CannedAccessControlList.PublicReadWrite);
         transferObserver.setTransferListener(new TransferListener() {
             @Override
@@ -119,7 +124,7 @@ public class FireFileController {
                 switch (transferState) {
                     case COMPLETED:
                         final FireFile.State.Builder builder = new FireFile.State.Builder();
-                        builder.name(state.name()).mimeType(state.mimeType()).url(s3URL + File.separator + s3Bucket + File.separator + objectId);
+                        builder.name(state.name()).mimeType(state.mimeType()).url(s3URL + File.separator + s3Bucket + File.separator + finalObjectId);
                         taskCompletionSource.setResult(builder.build());
                         break;
                     case FAILED:
