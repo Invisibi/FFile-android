@@ -125,10 +125,10 @@ public class FireFileController {
                     case COMPLETED:
                         final FireFile.State.Builder builder = new FireFile.State.Builder();
                         builder.name(state.name()).mimeType(state.mimeType()).url(s3URL + File.separator + s3Bucket + File.separator + finalObjectId);
-                        taskCompletionSource.setResult(builder.build());
+                        taskCompletionSource.trySetResult(builder.build());
                         break;
                     case FAILED:
-                        taskCompletionSource.setError(new Exception("Upload FFile fail"));
+                        taskCompletionSource.trySetError(new Exception("Upload FFile fail"));
                         break;
                 }
             }
@@ -142,7 +142,7 @@ public class FireFileController {
 
             @Override
             public void onError(final int id, final Exception ex) {
-                taskCompletionSource.setError(ex);
+                taskCompletionSource.trySetError(ex);
             }
         });
         return taskCompletionSource;
