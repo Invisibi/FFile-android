@@ -3,7 +3,9 @@ package com.invisibi.firefile;
 import android.content.Context;
 import android.webkit.MimeTypeMap;
 
+import com.amazonaws.auth.CognitoCachingCredentialsProvider;
 import com.amazonaws.regions.Regions;
+import com.amazonaws.services.s3.AmazonS3Client;
 import com.invisibi.firefile.callback.GetDataCallback;
 import com.invisibi.firefile.callback.GetDataStreamCallback;
 import com.invisibi.firefile.callback.GetFileCallback;
@@ -120,10 +122,19 @@ public class FireFile {
 
     }
 
-    public static void initialize(final Context context, final String awsIdentityPoolId, final String s3URL, final String s3Bucket, final Regions s3Regions) {
-        fFileController = new FireFileController(context, awsIdentityPoolId, s3Regions, s3URL, s3Bucket);
+    public static void initialize(final Context context, final AmazonS3Client amazonS3Client,
+                                  final String s3URL, final String s3Bucket) {
+        fFileController = new FireFileController(context, amazonS3Client, s3URL, s3Bucket);
         FireFile.s3URL = s3URL;
         FireFile.s3Bucket = s3Bucket;
+    }
+
+    public static void initialize(final Context context, final String awsIdentityPoolId, final String s3URL,
+                                  final String s3Bucket, final Regions s3Regions) {
+        final CognitoCachingCredentialsProvider
+                credentialsProvider = new CognitoCachingCredentialsProvider(context, awsIdentityPoolId, s3Regions);
+        final AmazonS3Client s3Client = new AmazonS3Client(credentialsProvider);
+        initialize(context, s3Client, s3URL, s3Bucket);
     }
 
     public FireFile(final String objectId) {
