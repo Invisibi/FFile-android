@@ -4,13 +4,10 @@ import android.content.Context;
 import android.text.TextUtils;
 import android.util.Log;
 
-import com.amazonaws.auth.CognitoCachingCredentialsProvider;
 import com.amazonaws.mobileconnectors.s3.transferutility.TransferListener;
 import com.amazonaws.mobileconnectors.s3.transferutility.TransferObserver;
 import com.amazonaws.mobileconnectors.s3.transferutility.TransferState;
 import com.amazonaws.mobileconnectors.s3.transferutility.TransferUtility;
-import com.amazonaws.regions.Regions;
-import com.amazonaws.services.s3.AmazonS3;
 import com.amazonaws.services.s3.AmazonS3Client;
 import com.amazonaws.services.s3.model.CannedAccessControlList;
 import com.invisibi.firefile.callback.ProgressCallback;
@@ -35,14 +32,13 @@ public class FireFileController {
     private String s3Bucket;
     private File cachePath;
 
-    public FireFileController(final Context context, final String awsIdentityPoolId, final Regions s3Regions, final String s3URL, final String s3Bucket) {
+    public FireFileController(final Context context, final AmazonS3Client amazonS3Client,
+                              final String s3URL, final String s3Bucket) {
         this.s3Bucket = s3Bucket;
         this.s3URL = s3URL;
         cachePath = new File(context.getCacheDir(), "FFile");
 
-        final CognitoCachingCredentialsProvider credentialsProvider = new CognitoCachingCredentialsProvider(context, awsIdentityPoolId, s3Regions);
-        final AmazonS3 s3 = new AmazonS3Client(credentialsProvider);
-        transferUtility = new TransferUtility(s3, context);
+        transferUtility = new TransferUtility(amazonS3Client, context);
     }
 
     public File getCacheFile(FireFile.State state) {
