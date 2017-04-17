@@ -3,7 +3,9 @@ package com.invisibi.firefile;
 import android.content.Context;
 import android.webkit.MimeTypeMap;
 
+import com.amazonaws.auth.CognitoCachingCredentialsProvider;
 import com.amazonaws.regions.Regions;
+import com.amazonaws.services.s3.AmazonS3Client;
 import com.invisibi.firefile.callback.GetDataCallback;
 import com.invisibi.firefile.callback.GetDataStreamCallback;
 import com.invisibi.firefile.callback.GetFileCallback;
@@ -33,6 +35,7 @@ public class FireFile {
     private static String s3URL;
     private static String s3Bucket;
     private static FireFileController fFileController;
+    private final String objectId;
     private State state;
     private byte[] data;
     private File file;
@@ -120,17 +123,23 @@ public class FireFile {
 
     }
 
-    public static void initialize(final Context context, final String awsIdentityPoolId, final String s3URL, final String s3Bucket, final Regions s3Regions) {
-        fFileController = new FireFileController(context, awsIdentityPoolId, s3Regions, s3URL, s3Bucket);
+    public static void initialize(final Context context, final AmazonS3Client amazonS3Client,
+                                  final String s3URL, final String s3Bucket) {
+        FireFile.fFileController = new FireFileController(context, amazonS3Client, s3URL, s3Bucket);
         FireFile.s3URL = s3URL;
         FireFile.s3Bucket = s3Bucket;
     }
 
+    public static void initialize(final Context context, final String awsIdentityPoolId, final String s3URL,
+                                  final String s3Bucket, final Regions s3Regions) {
+        final CognitoCachingCredentialsProvider
+                credentialsProvider = new CognitoCachingCredentialsProvider(context, awsIdentityPoolId, s3Regions);
+        final AmazonS3Client s3Client = new AmazonS3Client(credentialsProvider);
+        initialize(context, s3Client, s3URL, s3Bucket);
+    }
+
     public FireFile(final String objectId) {
-        final String url = s3URL + File.separator + s3Bucket + File.separator + FireFileController.DEFAULT_SUB_FOLDER + File.separator + objectId;
-        final String mimeType = MimeTypeMap.getFileExtensionFromUrl(url);
-        final String name = objectId;
-        this.state = new State.Builder().url(url).name(name).mimeType(mimeType).build();
+        this.objectId = objectId;
     }
 
     public FireFile(final File file) {
@@ -167,32 +176,46 @@ public class FireFile {
 
     public FireFile(final State state) {
         this.state = state;
+        this.objectId = null;
+    }
+
+    private void setState(final State state) {
+        this.state = state;
     }
 
     public State getState() {
+        if (state == null && s3URL != null && s3Bucket != null) {
+            final String url =
+                    s3URL + File.separator + s3Bucket + File.separator + FireFileController.DEFAULT_SUB_FOLDER +
+                            File.separator + objectId;
+            final String mimeType = MimeTypeMap.getFileExtensionFromUrl(url);
+            final String name = objectId;
+            this.state = new State.Builder().url(url).name(name).mimeType(mimeType).build();
+        }
         return state;
     }
 
     public String getName() {
-        return state.name();
+        return getState() != null ? getState().name() : "";
     }
 
     public boolean isDirty() {
-        return state.url() == null;
+        return getState() != null ? getState().url() == null : true;
     }
 
     public boolean isDataAvailable() {
-        return data != null || fFileController.isDataAvailable(state);
+        return data != null
+                || (fFileController != null && getState() != null && fFileController.isDataAvailable(getState()));
     }
 
     public String getUrl() {
-        return state.url();
+        return getState() != null ? getState().url() : "";
     }
 
     public String getObjectId() {
         String objectId = "";
-        if (state != null) {
-            objectId = state.url().substring(state.url().lastIndexOf(File.separator) + 1);
+        if (getState() != null) {
+            objectId = getState().url().substring(getState().url().lastIndexOf(File.separator) + 1);
         }
         return objectId;
     }
@@ -201,7 +224,8 @@ public class FireFile {
         FireFileTaskUtils.wait(saveInBackground());
     }
 
-    private Task<Void> saveAsync(final ProgressCallback uploadProgressCallback, final Task<Void> toAwait, final Task<Void> cancellationToken) {
+    private Task<Void> saveAsync(final ProgressCallback uploadProgressCallback, final Task<Void> toAwait,
+                                 final Task<Void> cancellationToken) {
         // If the file isn't dirty, just return immediately.
         if (!isDirty()) {
             return Task.forResult(null);
@@ -220,17 +244,20 @@ public class FireFile {
                 if (cancellationToken != null && cancellationToken.isCancelled()) {
                     return Task.cancelled();
                 }
+                if (fFileController == null || getState() == null) {
+                    return Task.forError(createFireFileNotInitializedError());
+                }
 
                 Task<FireFile.State> saveTask;
                 if (data != null) {
                     saveTask = fFileController.saveAsync(
-                            state,
+                            getState(),
                             data,
                             progressCallbackOnMainThread(uploadProgressCallback),
                             cancellationToken);
                 } else {
                     saveTask = fFileController.saveAsync(
-                            state,
+                            getState(),
                             file,
                             progressCallbackOnMainThread(uploadProgressCallback),
                             cancellationToken);
@@ -239,7 +266,7 @@ public class FireFile {
                 return saveTask.onSuccessTask(new Continuation<State, Task<Void>>() {
                     @Override
                     public Task<Void> then(Task<State> task) throws Exception {
-                        state = task.getResult();
+                        setState(task.getResult());
                         // Since we have successfully uploaded the file, we do not need to hold the file pointer
                         // anymore.
                         data = null;
@@ -298,18 +325,19 @@ public class FireFile {
         return taskQueue.enqueue(new Continuation<Void, Task<byte[]>>() {
             @Override
             public Task<byte[]> then(Task<Void> toAwait) throws Exception {
-                return fetchInBackground(progressCallback, toAwait, cts.getTask()).onSuccess(new Continuation<File, byte[]>() {
-                    @Override
-                    public byte[] then(Task<File> task) throws Exception {
-                        File file = task.getResult();
-                        try {
-                            return FireFileUtils.readFileToByteArray(file);
-                        } catch (IOException e) {
-                            // do nothing
-                        }
-                        return null;
-                    }
-                });
+                return fetchInBackground(progressCallback, toAwait, cts.getTask())
+                        .onSuccess(new Continuation<File, byte[]>() {
+                            @Override
+                            public byte[] then(Task<File> task) throws Exception {
+                                File file = task.getResult();
+                                try {
+                                    return FireFileUtils.readFileToByteArray(file);
+                                } catch (IOException e) {
+                                    // do nothing
+                                }
+                                return null;
+                            }
+                        });
             }
         }).continueWithTask(new Continuation<byte[], Task<byte[]>>() {
             @Override
@@ -379,12 +407,13 @@ public class FireFile {
         return taskQueue.enqueue(new Continuation<Void, Task<InputStream>>() {
             @Override
             public Task<InputStream> then(Task<Void> toAwait) throws Exception {
-                return fetchInBackground(progressCallback, toAwait, cts.getTask()).onSuccess(new Continuation<File, InputStream>() {
-                    @Override
-                    public InputStream then(Task<File> task) throws Exception {
-                        return new FileInputStream(task.getResult());
-                    }
-                });
+                return fetchInBackground(progressCallback, toAwait, cts.getTask())
+                        .onSuccess(new Continuation<File, InputStream>() {
+                            @Override
+                            public InputStream then(Task<File> task) throws Exception {
+                                return new FileInputStream(task.getResult());
+                            }
+                        });
             }
         }).continueWithTask(new Continuation<InputStream, Task<InputStream>>() {
             @Override
@@ -396,7 +425,8 @@ public class FireFile {
         });
     }
 
-    private Task<File> fetchInBackground(final ProgressCallback progressCallback, final Task<Void> toAwait, final Task<Void> cancellationToken) {
+    private Task<File> fetchInBackground(final ProgressCallback progressCallback, final Task<Void> toAwait,
+                                         final Task<Void> cancellationToken) {
         if (cancellationToken != null && cancellationToken.isCancelled()) {
             return Task.cancelled();
         }
@@ -407,16 +437,25 @@ public class FireFile {
                 if (cancellationToken != null && cancellationToken.isCancelled()) {
                     return Task.cancelled();
                 }
-                return fFileController.fetchAsync(state, progressCallbackOnMainThread(progressCallback), cancellationToken);
+                if (fFileController == null || getState() == null) {
+                    return Task.forError(createFireFileNotInitializedError());
+                }
+                return fFileController
+                        .fetchAsync(getState(), progressCallbackOnMainThread(progressCallback), cancellationToken);
             }
         });
+    }
+
+    IllegalStateException createFireFileNotInitializedError() {
+        return new IllegalStateException("Firefile not initialized");
     }
 
     public Task<InputStream> getDataStreamInBackground() {
         return getDataStreamInBackground((ProgressCallback) null);
     }
 
-    public void getDataStreamInBackground(final GetDataStreamCallback dataStreamCallback, final ProgressCallback progressCallback) {
+    public void getDataStreamInBackground(final GetDataStreamCallback dataStreamCallback,
+                                          final ProgressCallback progressCallback) {
         FireFileTaskUtils.callbackOnMainThreadAsync(getDataStreamInBackground(progressCallback), dataStreamCallback);
     }
 
